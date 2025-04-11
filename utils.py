@@ -722,7 +722,10 @@ def read_data_dict(directory_path):
         gt_freqs = default_theory_freq(filename)
         bw = (stop_freq - start_freq) * 1e6
         cd = cd * 1e-6
-        gt_slope = bw / cd
+        if cd != 0:
+            gt_slope = bw / cd
+        else:
+            gt_slope = 0
         
         data = parse_csv_file(os.path.join(directory_path, filename))
         key = f"{distance}-{angle}-{index}-{start_freq}-{stop_freq}-{cd}-{dwells}"
@@ -740,6 +743,91 @@ def default_expected_ratio():
         delta_L1 / delta_L2,   # Ratio 2 (L3 to L2)
     ]
     return expected_ratios
+
+
+def calculate_detection_rate_with_detectable_snr(data_dict, tolerance, threshold, bin_feature_name, bins, expected_ratios, return_snr = False, los_nlos_mode = None):
+    """
+    Calculate the detection rate and optionally the average SNR for detectable signals 
+    within specified bins based on the provided data.
+    Args:
+        data_dict (dict): A dictionary containing data objects, where each key corresponds 
+            to a data object with features used for detection.
+        tolerance (float): The tolerance value for matching expected ratios in the detection process.
+        threshold (float): The minimum score required to consider a detection as valid.
+        bin_feature_name (str): The name of the feature in the data objects used for binning.
+        bins (list): A list of bin edges used to group data based on the `bin_feature_name`.
+        expected_ratios (list): A list of expected ratios used to find the best triplet in the data.
+        return_snr (bool, optional): If True, the function also returns the average SNR for 
+            detectable signals. Defaults to False.
+        los_nlos_mode (str, optional): Specifies whether to filter data for "los" (line-of-sight) 
+            or "nlos" (non-line-of-sight) modes. If None, no filtering is applied. Defaults to None.
+    Returns:
+        list: A list of detection rates for each bin.
+        list (optional): A list of average SNR values for detectable signals in each bin, 
+            if `return_snr` is True.
+    Raises:
+        Exception: If an error occurs during the detection process for a specific data object, 
+            it is caught and logged, but the function continues processing other data.
+    Notes:
+        - The function processes each data object to find the best triplet based on the expected 
+            ratios and calculates a score and SNR for each object.
+        - Data is grouped into bins based on the `bin_feature_name`, and detection rates and 
+            SNR values are calculated for each bin.
+        - If no data is present in a bin, a warning message is printed, and the bin's detection 
+            rate and SNR are set to 0.
+    """
+    detection_dict = {}
+    for bin_range in bins:
+        detection_dict[bin_range] = {"detected": 0, "total": 0, "snr": 0}
+    # select NLOS or LOS data
+    if los_nlos_mode is not None:
+        if los_nlos_mode == "los":
+            filenames = [filename for filename in filenames if "-d" not in filename]
+        if los_nlos_mode == "nlos":
+            filenames = [filename for filename in filenames if "-d" in filename]
+    
+    # Find the best triplet for each data object
+    for data_key in data_dict:
+        data_obj = data_dict[data_key]
+        try:
+            best_triplet, snr, _ = find_beat_freq_triplet_with_expected_ratio(expected_ratios, tolerance, data_obj, radar_detection_mode = True, small_peak_cal = 200, plot = False, return_snr = True)
+            if best_triplet:
+                coverage = 1
+            else:
+                coverage = 0
+                snr = 0
+        except Exception as e:
+            print(f"Error for {data_key}: {e}")
+            coverage = 0
+            snr = 0
+        data_obj['score'] = coverage
+        data_obj['snr'] = snr
+            
+    for data_obj in data_dict.values():
+        bin_feature = data_obj[bin_feature_name]
+        score = data_obj['score']
+
+        bin_range = bins[np.argmax(bin_feature < bins) - 1]
+        detection_dict[bin_range]["total"] += 1
+        if score >= threshold:
+            detection_dict[bin_range]["snr"] += data_obj["snr"] # * Only taking detectable SNR
+            detection_dict[bin_range]["detected"] += 1
+        
+    bin_values = []
+    snr_values = []
+    for detection_data in detection_dict.values():
+        if detection_data["total"] == 0:
+            bin_values.append(0)
+            snr_values.append(0)
+            print("Error! No data in bin")
+            continue
+        bin_values.append(detection_data["detected"] / detection_data["total"])
+        snr_values.append(detection_data["snr"] / detection_data["detected"] if detection_data["detected"] > 0 else 0)
+
+    if return_snr:
+        return bin_values, snr_values
+    return bin_values
+
 
 def find_beat_freq_triplet_with_expected_ratio(expected_ratios, tolerance, data_obj, radar_detection_mode, small_peak_cal = 400, plot = False, return_snr = False, crop_to_list = False, noise_count = None, fix_amplitude_order = False, noise_level = 10, window_length = 20):
     """
