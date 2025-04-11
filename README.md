@@ -2,6 +2,8 @@
 
 ## Introduction
 
+This repo provides relevant code and dataset collected to generate all figures for the paper titled ChirpEye: Passive Sensing and Profiling of FMCW Radars with a Resource-constrained Tag (MobiCom’25). It features datasets collected with our custom-designed tag hardware when an FMCW radar is transmitting in the environment, with various parameters and locations. The code provided includes processing and benchmarking pipelines detecting whether a radar is present or not, as well as the slope and angle of arrival of the radar.
+
 ## Usage
 
 After cloning the repository, build and run the docker environment:
